@@ -1,0 +1,207 @@
+#!/usr/bin/perl
+# Copyright (C) 2011  Glen Pitt-Pladdy
+#
+# This program is free software; you can redistribute it and/or
+# modify it under the terms of the GNU General Public License
+# as published by the Free Software Foundation; either version 2
+# of the License, or (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program; if not, write to the Free Software
+# Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
+#
+#
+# See: http://www.pitt-pladdy.com/blog/_20111222-093052_0000_Peak_Network_Bandwidth_for_Cacti/
+
+use strict;
+use warnings;
+# under Debian based systems you will need: libproc-daemon-perl
+# where to keep the pid file
+my $PID = '/var/run/netpeakmond.pid';
+
+# set command / arguments
+$0 = __FILE__.' '.join(' ',@ARGV);
+
+# sanity check arguments
+# should be: <sample period> <peak hold period> <update time> <stats file path>
+if ( $#ARGV != 3 or $ARGV[0] !~ /^\d+$/ or $ARGV[1] !~ /^\d+$/ or $ARGV[2] !~ /^\d+$/ or $ARGV[3] !~ /\/\w+/ ) {
+	die "Usage: $0 <sample period> <peak hold period> <update time> <stats file path>\n";
+}
+
+
+# daemonise
+use Proc::Daemon;
+my $pid = Proc::Daemon::Init ();
+if ( $pid > 0 ) {
+	# we are the parent
+	exit 0;
+}
+
+# get some signal handlers in place
+$SIG{INT} = 'cleanexit';
+$SIG{TERM} = 'cleanexit';
+$SIG{QUIT} = 'cleanexit';
+
+
+my $sampletime = $ARGV[0];
+my $updatetime = $ARGV[2];
+my $statsfile = $ARGV[3];
+
+# work out timing
+my $nextsample = $^T + $sampletime;
+my $bufferpoints = int ( $ARGV[1] / $sampletime );
+my $nextupdate = $^T;
+
+
+# write pid file
+open my $pidh, '>', $PID or die "FATAL - can't write \"$PID\": $!\n";
+print $pidh "$$\n";
+close $pidh;
+
+
+# where to store last sample
+my %ringbuffer;
+
+my %sample = readstats ();
+my %lastsample = %sample;
+my %stats;
+my %peak;
+
+# initialise ringbuffer
+foreach my $dev (keys %sample) {
+	$ringbuffer{$dev}{'rx'} = [];
+	$ringbuffer{$dev}{'tx'} = [];
+	$peak{$dev}{'rx'} = 0;
+	$peak{$dev}{'tx'} = 0;
+	for ( my $i = 0; $i < $bufferpoints; ++$i ) {
+		${$ringbuffer{$dev}{'rx'}}[$i] = 0;
+		${$ringbuffer{$dev}{'tx'}}[$i] = 0;
+	}
+}
+
+
+my $loop = 1;
+my $i = 0;
+while ( $loop ) {
+	%sample = readstats ();
+	foreach my $dev (keys %sample) {
+		# work out rates
+		$stats{$dev}{'rx'} = $sample{$dev}{'rx'} - $lastsample{$dev}{'rx'};
+		$stats{$dev}{'rx'} /= $sampletime;
+		$stats{$dev}{'tx'} = $sample{$dev}{'tx'} - $lastsample{$dev}{'tx'};
+		$stats{$dev}{'tx'} /= $sampletime;
+		# figure out new peaks
+		if (  $stats{$dev}{'rx'} > $peak{$dev}{'rx'} ) {
+			# got a new peak value
+			$peak{$dev}{'rx'} = $stats{$dev}{'rx'};
+			${$ringbuffer{$dev}{'rx'}}[$i] = $stats{$dev}{'rx'};
+		} elsif ( ${$ringbuffer{$dev}{'rx'}}[$i] >= $peak{$dev}{'rx'} ) {
+			${$ringbuffer{$dev}{'rx'}}[$i] = $stats{$dev}{'rx'};
+			# overwritten a peak - need to find next lowest valueto 
+			$peak{$dev}{'rx'} = 0;
+			for ( my $j = 0; $j < $bufferpoints; ++$j ) {
+				if ( ${$ringbuffer{$dev}{'rx'}}[$j] > $peak{$dev}{'rx'} ) {
+					$peak{$dev}{'rx'} = ${$ringbuffer{$dev}{'rx'}}[$j];
+				}
+			}
+		} else {
+			# peak is still valid - just record
+			${$ringbuffer{$dev}{'rx'}}[$i] = $stats{$dev}{'rx'};
+		}
+		if (  $stats{$dev}{'tx'} > $peak{$dev}{'tx'} ) {
+			# got a new peak value
+			$peak{$dev}{'tx'} = $stats{$dev}{'tx'};
+			${$ringbuffer{$dev}{'tx'}}[$i] = $stats{$dev}{'tx'};
+		} elsif ( ${$ringbuffer{$dev}{'tx'}}[$i] >= $peak{$dev}{'tx'} ) {
+			${$ringbuffer{$dev}{'tx'}}[$i] = $stats{$dev}{'tx'};
+			# overwritten a peak - need to find next lowest valueto 
+			$peak{$dev}{'tx'} = 0;
+			for ( my $j = 0; $j < $bufferpoints; ++$j ) {
+				if ( ${$ringbuffer{$dev}{'tx'}}[$j] > $peak{$dev}{'tx'} ) {
+					$peak{$dev}{'tx'} = ${$ringbuffer{$dev}{'tx'}}[$j];
+				}
+			}
+		} else {
+			# peak is still valid - just record
+			${$ringbuffer{$dev}{'tx'}}[$i] = $stats{$dev}{'tx'};
+		}
+	}
+	%lastsample = %sample;	# ready for next time
+
+
+	# increment index
+	$i = ( $i + 1 ) % $bufferpoints;
+
+	# update stats if needed
+	if ( time () > $nextupdate ) {
+		$nextupdate += $updatetime;
+		open my $output, '>', "$statsfile.TMP";
+		print $output 'devs: '.join(' ',keys %sample)."\n";
+		print $output 'rx:';
+		foreach my $dev (keys %sample) {
+			print $output ' '.$peak{$dev}{'rx'};
+		}
+		print $output "\n";
+		print $output 'tx:';
+		foreach my $dev (keys %sample) {
+			print $output ' '.$peak{$dev}{'tx'};
+		}
+		print $output "\n";
+		close $output;
+		rename "$statsfile.TMP", $statsfile;
+	}
+
+	# sleep to next sample
+	my $sleeptime = $nextsample - time();
+	$nextsample += $sampletime;
+	sleep $sleeptime;
+}
+
+
+
+
+
+
+
+# remove pid file
+unlink $PID or die "FATAL - can't remove \"$PID\": $!\n";
+
+
+
+
+
+sub readstats {
+	open my $stat, '<', '/proc/net/dev';
+	<$stat>;
+	<$stat>;
+	my %sample;
+	while ( defined ( my $line = <$stat> ) ) {
+		chomp $line;
+		if ( $line =~ /^\s*(\w+):\s*(\d+)\s+\d+\s+\d+\s+\d+\s+\d+\s+\d+\s+\d+\s+\d+\s+(\d+)\s+/ ) {
+			$sample{$1}{'rx'} = $2;
+			$sample{$1}{'tx'} = $3;
+		}
+	}
+	close $stat;
+	return %sample;
+}
+
+
+
+
+
+
+
+
+sub cleanexit {
+	$loop = 0;
+}
+
+
+
+
