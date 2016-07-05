@@ -141,14 +141,16 @@ while ( $loop ) {
 	if ( time () > $nextupdate ) {
 		$nextupdate += $updatetime;
 		open my $output, '>', "$statsfile.TMP";
-		print $output 'devs: '.join(' ',keys %sample)."\n";
+		chmod 0644, $output;
+		my @devs = sort keys %sample;
+		print $output 'devs: '.join(' ',@devs)."\n";
 		print $output 'rx:';
-		foreach my $dev (keys %sample) {
+		foreach my $dev (@devs) {
 			print $output ' '.$peak{$dev}{'rx'};
 		}
 		print $output "\n";
 		print $output 'tx:';
-		foreach my $dev (keys %sample) {
+		foreach my $dev (@devs) {
 			print $output ' '.$peak{$dev}{'tx'};
 		}
 		print $output "\n";
@@ -158,6 +160,7 @@ while ( $loop ) {
 
 	# sleep to next sample
 	my $sleeptime = $nextsample - time();
+	if ( $sleeptime < 1 ) { $sleeptime = 1; }
 	$nextsample += $sampletime;
 	sleep $sleeptime;
 }
@@ -182,7 +185,8 @@ sub readstats {
 	my %sample;
 	while ( defined ( my $line = <$stat> ) ) {
 		chomp $line;
-		if ( $line =~ /^\s*(\w+):\s*(\d+)\s+\d+\s+\d+\s+\d+\s+\d+\s+\d+\s+\d+\s+\d+\s+(\d+)\s+/ ) {
+		if ( $line =~ /^\s*(veth\S+):/ ) { next; }
+		if ( $line =~ /^\s*(\S+):\s*(\d+)\s+\d+\s+\d+\s+\d+\s+\d+\s+\d+\s+\d+\s+\d+\s+(\d+)\s+/ ) {
 			$sample{$1}{'rx'} = $2;
 			$sample{$1}{'tx'} = $3;
 		}
