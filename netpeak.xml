@@ -1,0 +1,33 @@
+<interface>
+	<name>Network Peak Traffic</name>
+        <index_order_type>numeric</index_order_type>
+	<oid_index>NET-SNMP-EXTEND-MIB::nsExtendOutLine."netpeakdev"</oid_index>
+
+	<fields>
+
+		<netDevices>
+			<name>Index</name>
+                        <method>walk</method>
+                        <source>value</source>
+			<direction>input</direction>
+			<oid>NET-SNMP-EXTEND-MIB::nsExtendOutLine."netpeakdev"</oid>
+		</netDevices>
+
+		<netTXRate>
+			<name>TX rate</name>
+			<method>walk</method>
+			<source>value</source>
+			<direction>output</direction>
+			<oid>NET-SNMP-EXTEND-MIB::nsExtendOutLine."netpeaktx"</oid>
+		</netTXRate>
+
+		<netRXRate>
+			<name>RX rate</name>
+			<method>walk</method>
+			<source>value</source>
+			<direction>output</direction>
+			<oid>NET-SNMP-EXTEND-MIB::nsExtendOutLine."netpeakrx"</oid>
+		</netRXRate>
+
+	</fields>
+</interface>
