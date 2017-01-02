@@ -16,7 +16,7 @@
 # Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 #
 #
-# See: http://www.pitt-pladdy.com/blog/_20111222-093052_0000_Peak_Network_Bandwidth_for_Cacti/
+# See: https://www.pitt-pladdy.com/blog/_20111222-093052_0000_Peak_Network_Bandwidth_for_Cacti/
 
 use strict;
 use warnings;
